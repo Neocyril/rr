@@ -1,0 +1,95 @@
+name: Terraform Deployment for Grafana Probe
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  terraform:
+    name: Terraform CI/CD
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./terraform
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      - name: Terraform Init
+        id: init
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+          API_SERVER: ${{ secrets.API_SERVER }}
+          PRIVATE_KEY_PATH: ~/.ssh/id_rsa
+        run: terraform init
+
+      - name: Terraform Plan
+        id: plan
+        if: github.event_name == 'pull_request'
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+          API_SERVER: ${{ secrets.API_SERVER }}
+          PRIVATE_KEY_PATH: ~/.ssh/id_rsa
+        run: terraform plan -var="server_ip=$SERVER_IP" \
+                            -var="ssh_user=$SSH_USER" \
+                            -var="API_TOKEN=$API_TOKEN" \
+                            -var="api_server=$API_SERVER" \
+                            -var="api_token=$API_TOKEN" \
+                            -var="private_key_path=$PRIVATE_KEY_PATH" \
+                            -var="features=adhoc,k6,traceroute" \
+                            -no-color | tee plan.txt
+
+      - name: Comment Terraform Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('./terraform/plan.txt', 'utf8');
+            const output = plan.length > 65000 ? plan.slice(0, 65000) + '\n... (truncated)' : plan;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `### 🧪 Terraform Plan Result\n\`\`\`\n${output}\n\`\`\``
+            });
+
+      - name: Terraform Apply (on merge to main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+          API_SERVER: ${{ secrets.API_SERVER }}
+          PRIVATE_KEY_PATH: ~/.ssh/id_rsa
+        run: terraform apply -auto-approve \
+               -var="server_ip=$SERVER_IP" \
+               -var="ssh_user=$SSH_USER" \
+               -var="API_TOKEN=$API_TOKEN" \
+               -var="api_server=$API_SERVER" \
+               -var="api_token=$API_TOKEN" \
+               -var="private_key_path=$PRIVATE_KEY_PATH" \
+               -var="features=adhoc,k6,traceroute"
