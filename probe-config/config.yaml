@@ -1,0 +1,4 @@
+logs:
+  level: debug
+metrics:
+  wal_directory: /tmp/wal

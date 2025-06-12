@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  grafana-private-probe:
+    image: grafana/synthetic-monitoring-agent:latest
+    container_name: grafana-private-probe
+    restart: unless-stopped
+    environment:
+      API_TOKEN: ${API_TOKEN}
+    volumes:
+      - ./probe-config:/etc/synthetic-monitoring-agent:ro
+    command: >
+      --config.file=/etc/synthetic-monitoring-agent/config.yaml
